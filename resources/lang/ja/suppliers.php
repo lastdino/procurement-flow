@@ -16,6 +16,7 @@ return [
     'buttons' => [
         'new_supplier' => '新規サプライヤー',
         'edit' => '編集',
+        'delete' => '削除',
         'cancel' => 'キャンセル',
         'save' => '保存',
         'saving' => '保存中...',
@@ -44,5 +45,13 @@ return [
         'purchase_orders' => '発注一覧',
         'empty_pos' => '発注がありません',
         'loading' => '読み込み中...',
+    ],
+    'delete' => [
+        'confirm_title' => 'サプライヤーを削除しますか？',
+        'confirm_text' => 'この操作は取り消せません。サプライヤーに関連する発注がある場合は削除できません。',
+        'confirm_button' => '削除する',
+        'deleting' => '削除中...',
+        'has_pos_error' => '関連する発注があるため削除できません。',
+        'deleted' => 'サプライヤーを削除しました。',
     ],
 ];

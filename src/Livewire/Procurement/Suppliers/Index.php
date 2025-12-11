@@ -33,6 +33,10 @@ class Index extends Component
     public ?int $selectedSupplierId = null;
     public ?array $supplierDetail = null;
 
+    // Delete confirmation state
+    public bool $showDeleteConfirm = false;
+    public ?int $deletingSupplierId = null;
+
     public function getSuppliersProperty()
     {
         $q = (string) $this->q;
@@ -84,6 +88,18 @@ class Index extends Component
         $this->showSupplierModal = false;
     }
 
+    public function confirmDelete(int $id): void
+    {
+        $this->deletingSupplierId = $id;
+        $this->showDeleteConfirm = true;
+    }
+
+    public function cancelDelete(): void
+    {
+        $this->showDeleteConfirm = false;
+        $this->deletingSupplierId = null;
+    }
+
     protected function supplierRules(): array
     {
         return [
@@ -115,6 +131,27 @@ class Index extends Component
         $this->showSupplierModal = false;
         // refresh list by touching q (or rely on computed getter on next render)
         $this->dispatch('toast', type: 'success', message: 'Supplier saved');
+    }
+
+    public function deleteSupplier(): void
+    {
+        if (! $this->deletingSupplierId) {
+            return;
+        }
+
+        /** @var Supplier $s */
+        $s = Supplier::query()->findOrFail($this->deletingSupplierId);
+
+        // Prevent deletion if related purchase orders exist
+        if ($s->purchaseOrders()->exists()) {
+            $this->dispatch('toast', type: 'error', message: __('procflow::suppliers.delete.has_pos_error'));
+            $this->cancelDelete();
+            return;
+        }
+
+        $s->delete();
+        $this->dispatch('toast', type: 'success', message: __('procflow::suppliers.delete.deleted'));
+        $this->cancelDelete();
     }
 
     // Detail modal helpers

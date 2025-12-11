@@ -36,6 +36,7 @@
                     <td class="py-2 px-3">{{ $s->phone }}</td>
                     <td class="py-2 px-3 text-right">
                         <flux:button size="xs" variant="outline" wire:click="openEditSupplier({{ $s->id }})">{{ __('procflow::suppliers.buttons.edit') }}</flux:button>
+                        <flux:button size="xs" variant="danger" class="ml-2" wire:click="confirmDelete({{ $s->id }})">{{ __('procflow::suppliers.buttons.delete') }}</flux:button>
                     </td>
                 </tr>
             @empty
@@ -187,6 +188,22 @@
 
             <div class="mt-4 flex items-center justify-end gap-3">
                 <flux:button variant="outline" x-on:click="$flux.modal('supplier-detail').close()">{{ __('procflow::suppliers.buttons.close') }}</flux:button>
+            </div>
+        </div>
+    </flux:modal>
+
+    {{-- Delete Confirmation Modal --}}
+    <flux:modal wire:model.self="showDeleteConfirm" name="supplier-delete">
+        <div class="w-full md:w-[] max-w-md">
+            <h3 class="text-lg font-semibold mb-3">{{ __('procflow::suppliers.delete.confirm_title') }}</h3>
+            <p class="text-sm text-neutral-600 dark:text-neutral-300">{{ __('procflow::suppliers.delete.confirm_text') }}</p>
+
+            <div class="mt-4 flex items-center justify-end gap-3">
+                <flux:button variant="outline" wire:click="cancelDelete">{{ __('procflow::suppliers.buttons.cancel') }}</flux:button>
+                <flux:button variant="danger" wire:click="deleteSupplier" wire:loading.attr="disabled">
+                    <span wire:loading.remove>{{ __('procflow::suppliers.delete.confirm_button') }}</span>
+                    <span wire:loading>{{ __('procflow::suppliers.delete.deleting') }}</span>
+                </flux:button>
             </div>
         </div>
     </flux:modal>

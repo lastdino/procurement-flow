@@ -16,6 +16,7 @@ return [
     'buttons' => [
         'new_supplier' => 'New Supplier',
         'edit' => 'Edit',
+        'delete' => 'Delete',
         'cancel' => 'Cancel',
         'save' => 'Save',
         'saving' => 'Saving...',
@@ -44,5 +45,13 @@ return [
         'purchase_orders' => 'Purchase Orders',
         'empty_pos' => 'No purchase orders',
         'loading' => 'Loading...',
+    ],
+    'delete' => [
+        'confirm_title' => 'Delete this supplier?',
+        'confirm_text' => 'This action cannot be undone. You cannot delete a supplier with related purchase orders.',
+        'confirm_button' => 'Delete',
+        'deleting' => 'Deleting...',
+        'has_pos_error' => 'Cannot delete supplier because related purchase orders exist.',
+        'deleted' => 'Supplier has been deleted.',
     ],
 ];
