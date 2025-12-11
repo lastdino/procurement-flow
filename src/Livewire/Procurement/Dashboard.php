@@ -55,8 +55,13 @@ class Dashboard extends Component
             ->where(function ($q) {
                 // Lot-managed: compare sum(lots.qty_on_hand) with safety_stock
                 $q->where(function ($sq) {
+                    $lotsTable = (new \Lastdino\ProcurementFlow\Models\MaterialLot())->getTable();
+                    $materialsTable = (new \Lastdino\ProcurementFlow\Models\Material())->getTable();
+
+                    $sub = "(select COALESCE(sum({$lotsTable}.qty_on_hand), 0) from {$lotsTable} where {$lotsTable}.material_id = {$materialsTable}.id)";
+
                     $sq->where('manage_by_lot', true)
-                        ->whereRaw('COALESCE(lots_sum_qty_on_hand, 0) < COALESCE(safety_stock, 0)');
+                        ->whereRaw("{$sub} < COALESCE(safety_stock, 0)");
                 })
                 // Non-lot: compare current_stock with safety_stock
                 ->orWhere(function ($sq) {
@@ -66,6 +71,7 @@ class Dashboard extends Component
                     ->whereRaw('COALESCE(current_stock, 0) < COALESCE(safety_stock, 0)');
                 });
             })
+            // Using the alias from withSum() is safe in ORDER BY
             ->orderByRaw('CASE WHEN manage_by_lot THEN COALESCE(lots_sum_qty_on_hand, 0) ELSE COALESCE(current_stock, 0) END asc')
             ->limit(10)
             ->get();

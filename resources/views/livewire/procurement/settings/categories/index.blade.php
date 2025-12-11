@@ -36,10 +36,10 @@
         <div class="p-4 space-y-4">
             <flux:heading size="sm">{{ $editingId ? (__('procflow::settings.categories.edit_title', [], null) ?: 'カテゴリを編集') : (__('procflow::settings.categories.create_title', [], null) ?: 'カテゴリを作成') }}</flux:heading>
 
-            <flux:input wire:model.live="name" label="{{ __('procflow::settings.categories.fields.name', [], null) ?: '名称' }}" />
+            <flux:input wire:model="name" label="{{ __('procflow::settings.categories.fields.name', [], null) ?: '名称' }}" />
             @error('name')<div class="text-red-600 text-xs">{{ $message }}</div>@enderror
 
-            <flux:input wire:model.live="code" placeholder="CHEMICALS" label="{{ __('procflow::settings.categories.fields.code', [], null) ?: 'コード (大文字・数字・-_ )' }}" />
+            <flux:input wire:model="code" placeholder="CHEMICALS" label="{{ __('procflow::settings.categories.fields.code', [], null) ?: 'コード (大文字・数字・-_ )' }}" />
             @error('code')<div class="text-red-600 text-xs">{{ $message }}</div>@enderror
 
             <div class="flex justify-end gap-2">

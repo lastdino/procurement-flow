@@ -8,7 +8,7 @@
         <div class="rounded border p-4 space-y-4">
             <flux:heading size="sm">{{ __('procflow::settings.taxes.items.heading') }}</flux:heading>
 
-            <flux:input type="number" step="0.001" wire:model.live="itemDefaultRate" label="{{ __('procflow::settings.taxes.items.default_rate') }}"/>
+            <flux:input type="number" step="0.001" wire:model="itemDefaultRate" label="{{ __('procflow::settings.taxes.items.default_rate') }}"/>
 
             <div class="space-y-2">
                 <div class="flex items-center justify-between">
@@ -19,10 +19,10 @@
                     @foreach ($itemRates as $i => $row)
                         <div class="grid grid-cols-12 gap-2 items-end">
                             <div class="col-span-5">
-                                <flux:input class="col-span-5" wire:model.live="itemRates.{{ $i }}.key" placeholder="reduced" label="{{ __('procflow::settings.taxes.items.additional_rates.key') }}"/>
+                                <flux:input class="col-span-5" wire:model="itemRates.{{ $i }}.key" placeholder="reduced" label="{{ __('procflow::settings.taxes.items.additional_rates.key') }}"/>
                             </div>
                             <div class="col-span-5">
-                                <flux:input class="col-span-5" type="number" step="0.001" wire:model.live="itemRates.{{ $i }}.rate" label="{{ __('procflow::settings.taxes.items.additional_rates.rate') }}"/>
+                                <flux:input class="col-span-5" type="number" step="0.001" wire:model="itemRates.{{ $i }}.rate" label="{{ __('procflow::settings.taxes.items.additional_rates.rate') }}"/>
                             </div>
                             <div class="col-span-2 flex justify-end">
                                 <flux:button size="xs" variant="danger" wire:click="removeRateRow({{ $i }})">{{ __('procflow::settings.taxes.items.additional_rates.remove') }}</flux:button>
@@ -31,7 +31,7 @@
                     @endforeach
                 </div>
             </div>
-            <flux:textarea rows="6" wire:model.live="itemScheduleJson" placeholder="{
+            <flux:textarea rows="6" wire:model="itemScheduleJson" placeholder="{
   'effective_from':'2027-10-01',
             'default_rate':0.12,
             'rates': {reduced:0.10}
@@ -43,11 +43,11 @@
 
             <div class="flex items-center justify-between">
                 <label class="text-sm">{{ __('procflow::settings.taxes.shipping.taxable') }}</label>
-                <flux:switch wire:model.live="shippingTaxable" />
+                <flux:switch wire:model="shippingTaxable" />
             </div>
 
             <flux:field label="{{ __('procflow::settings.taxes.shipping.tax_rate') }}">
-                <flux:input type="number" step="0.001" wire:model.live="shippingTaxRate" />
+                <flux:input type="number" step="0.001" wire:model="shippingTaxRate" />
                 @error('shippingTaxRate')<div class="text-red-600 text-xs mt-1">{{ $message }}</div>@enderror
             </flux:field>
         </div>

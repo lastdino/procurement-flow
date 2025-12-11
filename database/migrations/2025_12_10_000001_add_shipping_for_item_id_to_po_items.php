@@ -13,10 +13,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table(Tables::name('purchase_order_items'), function (Blueprint $table): void {
-            $table->foreignId('shipping_for_item_id')
+            // Use explicit, short FK name to avoid MariaDB 64-char identifier limit
+            $table->unsignedBigInteger('shipping_for_item_id')
                 ->nullable()
-                ->after('manufacturer')
-                ->constrained(table: Tables::name('purchase_order_items'))
+                ->after('manufacturer');
+
+            $table->foreign('shipping_for_item_id', 'pf_poi_ship_for_fk')
+                ->references('id')
+                ->on(Tables::name('purchase_order_items'))
                 ->nullOnDelete()
                 ->cascadeOnUpdate();
         });
@@ -28,7 +32,8 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table(Tables::name('purchase_order_items'), function (Blueprint $table): void {
-            $table->dropForeign([ 'shipping_for_item_id' ]);
+            // Drop the explicitly named foreign key first
+            $table->dropForeign('pf_poi_ship_for_fk');
             $table->dropColumn('shipping_for_item_id');
         });
     }

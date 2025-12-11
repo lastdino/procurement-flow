@@ -209,12 +209,36 @@ return new class extends Migration {
         // PO item option values (pivot-like)
         Schema::create(Tables::name('po_item_option_values'), function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('purchase_order_item_id')->constrained(Tables::name('purchase_order_items'));
-            $table->foreignId('group_id')->constrained(Tables::name('option_groups'));
-            $table->foreignId('option_id')->constrained(Tables::name('options'));
+
+            // Use explicit, short foreign key names to satisfy MariaDB's 64-char identifier limit
+            $table->unsignedBigInteger('purchase_order_item_id');
+            $table->unsignedBigInteger('group_id');
+            $table->unsignedBigInteger('option_id');
+
             $table->timestamps();
+
+            // indexes & uniques
             $table->unique(['purchase_order_item_id', 'group_id'], Tables::name('piv_item_group_unique'));
             $table->index(['option_id'], Tables::name('piv_option_idx'));
+
+            // foreign keys with short names
+            $table->foreign('purchase_order_item_id', 'pf_piv_po_item_fk')
+                ->references('id')
+                ->on(Tables::name('purchase_order_items'))
+                ->cascadeOnUpdate()
+                ->cascadeOnDelete();
+
+            $table->foreign('group_id', 'pf_piv_group_fk')
+                ->references('id')
+                ->on(Tables::name('option_groups'))
+                ->cascadeOnUpdate()
+                ->restrictOnDelete();
+
+            $table->foreign('option_id', 'pf_piv_option_fk')
+                ->references('id')
+                ->on(Tables::name('options'))
+                ->cascadeOnUpdate()
+                ->restrictOnDelete();
         });
 
         // Ordering tokens for QR/links
