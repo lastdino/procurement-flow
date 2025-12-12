@@ -18,7 +18,6 @@ use Lastdino\ProcurementFlow\Livewire\Procurement\Settings\Pdf\Index as PdfSetti
 use Lastdino\ProcurementFlow\Livewire\Procurement\Settings\Tokens\Index as TokensSettingsComponent;
 use Lastdino\ProcurementFlow\Livewire\Procurement\Settings\Tokens\Labels as TokenLabelsComponent;
 use Lastdino\ProcurementFlow\Livewire\Procurement\Settings\Categories\Index as CategoriesSettingsComponent;
-use Lastdino\ProcurementFlow\Http\Controllers\ScanReceivingController;
 use Lastdino\ProcurementFlow\Http\Controllers\PurchaseOrderPdfController;
 use Lastdino\ProcurementFlow\Http\Controllers\MaterialSdsDownloadController;
 
@@ -67,12 +66,6 @@ Route::group([
     // Receiving scan page
     Route::get('/receivings/scan', ReceivingScanComponent::class)
         ->name('procurement.receiving.scan');
-
-    // Receiving scan JSON endpoints (auth required via group middleware)
-    Route::get('/receivings/scan/info/{token}', [ScanReceivingController::class, 'info'])
-        ->name('procurement.receiving.scan.info');
-    Route::post('/receivings/scan/receive', [ScanReceivingController::class, 'store'])
-        ->name('procurement.receiving.scan.receive');
 
     // Options settings
     Route::get('/settings/options', OptionsSettingsComponent::class)

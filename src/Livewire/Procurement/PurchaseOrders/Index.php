@@ -11,19 +11,14 @@ use Livewire\WithPagination;
 use Lastdino\ProcurementFlow\Models\PurchaseOrder;
 use Lastdino\ProcurementFlow\Models\OptionGroup;
 use Lastdino\ProcurementFlow\Models\Option;
-use Lastdino\ProcurementFlow\Models\PurchaseOrderItemOptionValue;
+
 use Lastdino\ProcurementFlow\Support\Settings;
 use Lastdino\ProcurementFlow\Models\Receiving;
 use Lastdino\ProcurementFlow\Models\ReceivingItem;
-use Lastdino\ProcurementFlow\Models\PurchaseOrderItem;
-use Lastdino\ProcurementFlow\Models\Supplier;
-use Lastdino\ProcurementFlow\Models\Material;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Support\Carbon;
-use Lastdino\ProcurementFlow\Enums\PurchaseOrderStatus;
-use Lastdino\ProcurementFlow\Services\UnitConversionService;
 
 class Index extends Component
 {
@@ -138,7 +133,7 @@ class Index extends Component
                                 ->orWhereHas('items.material', function ($mq) use ($like) {
                                     $mq->where(function ($mm) use ($like) {
                                         $mm->where('name', 'like', $like)
-                                           ->orWhere('manufacturer_name', 'like', $like);
+                                            ->orWhere('manufacturer_name', 'like', $like);
                                     });
                                 })
                                 // 発注アイテムの説明／単発メーカー名
@@ -168,7 +163,7 @@ class Index extends Component
                             ->orWhereHas('items.material', function ($mq) use ($single) {
                                 $mq->where(function ($mm) use ($single) {
                                     $mm->where('name', 'like', "%{$single}%")
-                                       ->orWhere('manufacturer_name', 'like', "%{$single}%");
+                                        ->orWhere('manufacturer_name', 'like', "%{$single}%");
                                 });
                             })
                             // 発注アイテムのスキャン用トークン（先頭一致／全一致どちらも可）
@@ -723,15 +718,7 @@ class Index extends Component
     public function savePoFromModal(): void
     {
         // 承認フロー事前チェック（validateの前で止める）
-        try {
-            $flowIdStr = \Lastdino\ProcurementFlow\Models\AppSetting::get('approval_flow.purchase_order_flow_id');
-            $flowId = (int) ($flowIdStr ?? 0);
-            if ($flowId <= 0 || ! \Lastdino\ApprovalFlow\Models\ApprovalFlow::query()->whereKey($flowId)->exists()) {
-                $this->addError('approval_flow', '承認フローが未設定のため発注できません。管理者に連絡してください。');
-                return;
-            }
-        } catch (\Throwable $e) {
-            $this->addError('approval_flow', '承認フローが未設定のため発注できません。管理者に連絡してください。');
+        if (! $this->ensureApprovalFlowConfigured()) {
             return;
         }
 
@@ -762,172 +749,47 @@ class Index extends Component
                 'items' => $items,
             ],
         ];
-        $prefixedRules = $this->prefixFormRules($rules, 'poForm.');
-        $validatedAll = validator($payload, $prefixedRules)->validate();
-
-        $validated = $validatedAll['poForm'];
+        $validated = $this->validatePurchaseOrderPayload('poForm', $payload, $rules);
 
 
         // Path A: legacy/single-supplier explicit flow when supplier_id provided
         if (! empty($validated['supplier_id'])) {
-            /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrder $po */
-            $po = \Illuminate\Support\Facades\DB::transaction(function () use ($validated) {
-            $po = \Lastdino\ProcurementFlow\Models\PurchaseOrder::create([
-                'supplier_id' => $validated['supplier_id'],
-                'status' => 'draft',
-                'expected_date' => $validated['expected_date'] ?? null,
-                'subtotal' => 0,
-                'tax' => 0,
-                'total' => 0,
-                // 納品先：UI指定があれば使用。空ならPDF設定の既定値を保存
-                'delivery_location' => (string) ($validated['delivery_location'] ?? (Settings::pdf()['delivery_location'] ?? '')),
-                'created_by' => auth()->id() ?: null,
-            ]);
+            // Build input for shared factory
+            [$optionService, $factory, $approval] = $this->services();
 
-            $subtotal = 0.0;
-            $tax = 0.0;
-
-            // Resolve tax set once using expected_date if present
-            $expectedDate = isset($validated['expected_date']) && $validated['expected_date'] ? \Carbon\Carbon::parse($validated['expected_date']) : null;
-            $taxSet = Settings::itemTax($expectedDate);
-
-            // 1) 通常のアイテム行（品目ごとの送料行も直後に自動生成・紐づけ）
-            $materialIdsInOrder = [];
+            $lines = [];
             foreach ($validated['items'] as $idx => $line) {
-                $materialId = $line['material_id'] ?? null;
-                if (! is_null($materialId)) {
-                    // Validate material exists (already validated), and optionally fetch if needed later
-                    /** @var \Lastdino\ProcurementFlow\Models\Material|null $material */
-                    $material = \Lastdino\ProcurementFlow\Models\Material::find($materialId);
-                }
-                $lineTotal = (float) $line['qty_ordered'] * (float) $line['price_unit'];
-                // If tax_rate not provided, derive from material tax_code
-                if (array_key_exists('tax_rate', $line) && $line['tax_rate'] !== null && $line['tax_rate'] !== '') {
-                    $lineTaxRate = (float) $line['tax_rate'];
-                } else {
-                    /** @var \Lastdino\ProcurementFlow\Models\Material|null $material */
-                    // use previously fetched $material when available
-                    $lineTaxRate = $this->resolveMaterialTaxRate($material, $taxSet);
-                }
-                $lineTax = $lineTotal * $lineTaxRate;
-
-            /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrderItem $createdItem */
-            $createdItem = \Lastdino\ProcurementFlow\Models\PurchaseOrderItem::create([
-                'purchase_order_id' => $po->id,
-                'material_id' => $materialId,
-                'description' => $line['description'] ?? null,
-                'unit_purchase' => $line['unit_purchase'],
-                'qty_ordered' => $line['qty_ordered'],
-                'price_unit' => $line['price_unit'],
-                'tax_rate' => $lineTaxRate,
-                'line_total' => $lineTotal,
-                'desired_date' => $line['desired_date'] ?? null,
-                'expected_date' => $line['expected_date'] ?? null,
-                'note' => $line['note'] ?? null,
-            ]);
-
-            // Persist selected options into pivot per active group
-            // Use original form data for options since they are not part of validated rules
-            $selectedOptions = (array) ($this->poForm['items'][$idx]['options'] ?? []); // [group_id => option_id]
-            foreach ($selectedOptions as $groupId => $optionId) {
-                if (empty($optionId)) {
-                    continue;
-                }
-                // Validate option belongs to group and is active
-                $exists = Option::query()
-                    ->active()
-                    ->where('group_id', (int) $groupId)
-                    ->whereKey((int) $optionId)
-                    ->exists();
-                if (! $exists) {
-                    // skip invalid selection
-                    continue;
-                }
-
-                PurchaseOrderItemOptionValue::query()->updateOrCreate(
-                    [
-                        'purchase_order_item_id' => (int) $createdItem->getKey(),
-                        'group_id' => (int) $groupId,
-                    ],
-                    [
-                        'option_id' => (int) $optionId,
-                    ]
-                );
+                $lines[] = [
+                    'material_id' => (isset($line['material_id']) && $line['material_id'] !== '' && $line['material_id'] !== null)
+                        ? (int) $line['material_id']
+                        : null,
+                    'description' => $line['description'] ?? null,
+                    'unit_purchase' => (string) $line['unit_purchase'],
+                    'qty_ordered' => (float) $line['qty_ordered'],
+                    'price_unit' => (float) $line['price_unit'],
+                    'tax_rate' => $line['tax_rate'] ?? null,
+                    'desired_date' => $line['desired_date'] ?? null,
+                    'expected_date' => $line['expected_date'] ?? null,
+                    'note' => $line['note'] ?? null,
+                    // Normalize & validate options with shared service
+                    'options' => $optionService->normalizeAndValidate((array) ($this->poForm['items'][$idx]['options'] ?? [])),
+                ];
             }
 
-            $subtotal += $lineTotal;
-            $tax += $lineTax;
-            if (! is_null($materialId)) {
-                $materialIdsInOrder[(int) $materialId] = true;
-            }
+            $poInput = [
+                'supplier_id' => (int) $validated['supplier_id'],
+                'expected_date' => $validated['expected_date'] ?? null,
+                'delivery_location' => (string) ($validated['delivery_location'] ?? ''),
+                'items' => $lines,
+            ];
 
-            // 品目ごとの送料行を自動生成・紐づけ（B案）
-            if (! is_null($materialId) && isset($material) && $material) {
-                $separate = (bool) ($material->getAttribute('separate_shipping') ?? false);
-                $fee = (float) ($material->getAttribute('shipping_fee_per_order') ?? 0);
-                if ($separate && $fee > 0) {
-                    $shipping = Settings::shipping();
-                    $shippingTaxable = (bool) ($shipping['taxable'] ?? true);
-                    $shippingTaxRate = $shippingTaxable ? (float) ($shipping['tax_rate'] ?? 0.10) : 0.0;
-                    $desc = '送料（' . (string) ($material->getAttribute('name') ?? $material->getAttribute('sku') ?? '対象資材') . '）';
-
-                    \Lastdino\ProcurementFlow\Models\PurchaseOrderItem::create([
-                        'purchase_order_id' => $po->id,
-                        'material_id' => null,
-                        'description' => $desc,
-                        'unit_purchase' => 'shipping',
-                        'qty_ordered' => 1,
-                        'price_unit' => $fee,
-                        'tax_rate' => $shippingTaxRate,
-                        'line_total' => $fee,
-                        'desired_date' => null,
-                        'expected_date' => null,
-                        'shipping_for_item_id' => (int) $createdItem->getKey(),
-                    ]);
-
-                    $subtotal += $fee;
-                    $tax += ($fee * $shippingTaxRate);
-                }
-            }
-        }
-
-        // 2) まとめての送料生成はB案では不要（各行の直後で生成済み）
-
-        $po->update([
-            'subtotal' => $subtotal,
-            'tax' => $tax,
-            'total' => $subtotal + $tax,
-        ]);
-
-                return $po;
-            });
-
+            /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrder $po */
+            $po = $factory->create($poInput, true);
             // 承認フロー登録（設定されたFlow IDで登録）
-            try {
-                /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrder $poModel */
-                $poModel = $po->fresh();
-                $authorId = (int) (auth()->id() ?? $poModel->created_by ?? 0);
-                $link = null;
-                if (\Illuminate\Support\Facades\Route::has('procurement.purchase-orders.show')) {
-                    $link = route('procurement.purchase-orders.show', ['po' => $poModel->id]);
-                } elseif (\Illuminate\Support\Facades\Route::has('purchase-orders.show')) {
-                    $link = route('purchase-orders.show', ['purchase_order' => $poModel->id]);
-                }
-                $flowId = (int) ((\Lastdino\ProcurementFlow\Models\AppSetting::get('approval_flow.purchase_order_flow_id')) ?? 0);
-                \Log::debug('Registering approval flow for PO ID: '.$poModel->id.' with author ID: '.$authorId.' and flow ID: '.$flowId);
-                if ($authorId > 0 && $flowId > 0) {
-                    $poModel->registerApprovalFlowTask($flowId, $authorId, null, null, $link);
-                }
-            } catch (\Throwable $e) {
-                \Log::warning('Failed to register approval flow for PO: '.$e->getMessage(), ['po_id' => $po->id]);
-            }
+            $approval->registerForPo($po);
 
             $this->showPoModal = false;
-            if (\Illuminate\Support\Facades\Route::has('procurement.purchase-orders.show')) {
-                $this->redirectRoute('procurement.purchase-orders.show', ['po' => $po->id]);
-            } elseif (\Illuminate\Support\Facades\Route::has('purchase-orders.show')) {
-                $this->redirectRoute('purchase-orders.show', ['purchase_order' => $po->id]);
-            }
+            $this->redirectToPoShow($po);
             return;
         }
 
@@ -951,137 +813,40 @@ class Index extends Component
             $groups[$sid][] = ['idx' => $idx, 'line' => $line];
         }
 
+        $optionService = app(\Lastdino\ProcurementFlow\Services\OptionSelectionService::class);
+        $factory = app(\Lastdino\ProcurementFlow\Services\PurchaseOrderFactory::class);
+        $approval = app(\Lastdino\ProcurementFlow\Services\ApprovalFlowRegistrar::class);
+
         $created = [];
         foreach ($groups as $sid => $lines) {
-            $po = \Illuminate\Support\Facades\DB::transaction(function () use ($sid, $lines, $validated) {
-                $po = \Lastdino\ProcurementFlow\Models\PurchaseOrder::create([
-                    'supplier_id' => (int) $sid,
-                    'status' => 'draft',
-                    'expected_date' => $validated['expected_date'] ?? null,
-                    'subtotal' => 0,
-                    'tax' => 0,
-                    'total' => 0,
-                    // 納品先：UI指定があれば使用。空ならPDF設定の既定値を保存
-                    'delivery_location' => (string) ($validated['delivery_location'] ?? (Settings::pdf()['delivery_location'] ?? '')),
-                    'created_by' => auth()->id() ?: null,
-                ]);
-
-                $subtotal = 0.0;
-                $tax = 0.0;
-                $expectedDate = isset($validated['expected_date']) && $validated['expected_date'] ? \Carbon\Carbon::parse($validated['expected_date']) : null;
-                $taxSet = $this->resolveCurrentItemTaxSet($expectedDate);
-                $materialIdsInOrder = [];
-
-                foreach ($lines as $entry) {
-                    $idx = (int) $entry['idx'];
-                    $line = $entry['line'];
-                    $materialId = $line['material_id'] ?? null;
-                    $material = null;
-                    if (! is_null($materialId)) {
-                        $material = \Lastdino\ProcurementFlow\Models\Material::find((int) $materialId);
-                    }
-                    $lineTotal = (float) $line['qty_ordered'] * (float) $line['price_unit'];
-                    $lineTaxRate = null;
-                    if (array_key_exists('tax_rate', $line) && $line['tax_rate'] !== null && $line['tax_rate'] !== '') {
-                        $lineTaxRate = (float) $line['tax_rate'];
-                    } else {
-                        $lineTaxRate = $this->resolveMaterialTaxRate($material, $taxSet);
-                    }
-                    $lineTax = $lineTotal * $lineTaxRate;
-
-                    /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrderItem $createdItem */
-                    $createdItem = \Lastdino\ProcurementFlow\Models\PurchaseOrderItem::create([
-                        'purchase_order_id' => $po->id,
-                        'material_id' => $materialId,
-                        'description' => $line['description'] ?? null,
-                        'unit_purchase' => $line['unit_purchase'],
-                        'qty_ordered' => $line['qty_ordered'],
-                        'price_unit' => $line['price_unit'],
-                        'tax_rate' => $lineTaxRate,
-                        'line_total' => $lineTotal,
-                        'desired_date' => $line['desired_date'] ?? null,
-                        'expected_date' => $line['expected_date'] ?? null,
-                    ]);
-
-                    // Persist options selected in UI for this line
-                    $selectedOptions = (array) ($this->poForm['items'][$idx]['options'] ?? []);
-                    foreach ($selectedOptions as $groupId => $optionId) {
-                        if (empty($optionId)) { continue; }
-                        $exists = Option::query()->active()->where('group_id', (int) $groupId)->whereKey((int) $optionId)->exists();
-                        if (! $exists) { continue; }
-                        PurchaseOrderItemOptionValue::query()->updateOrCreate(
-                            [
-                                'purchase_order_item_id' => (int) $createdItem->getKey(),
-                                'group_id' => (int) $groupId,
-                            ],
-                            [
-                                'option_id' => (int) $optionId,
-                            ]
-                        );
-                    }
-
-                    $subtotal += $lineTotal;
-                    $tax += $lineTax;
-                    if (! is_null($materialId)) {
-                        $materialIdsInOrder[(int) $materialId] = true;
-                    }
-
-                    // 品目ごとの送料行を自動生成・紐づけ（B案）
-                    if (! is_null($materialId) && isset($material) && $material) {
-                        $separate = (bool) ($material->getAttribute('separate_shipping') ?? false);
-                        $fee = (float) ($material->getAttribute('shipping_fee_per_order') ?? 0);
-                        if ($separate && $fee > 0) {
-                            $shippingTaxable = (bool) config('procurement-flow.shipping.taxable', true);
-                            $shippingTaxRate = $shippingTaxable ? (float) config('procurement-flow.shipping.tax_rate', 0.10) : 0.0;
-                            $desc = '送料（' . (string) ($material->getAttribute('name') ?? $material->getAttribute('sku') ?? '対象資材') . '）';
-                            \Lastdino\ProcurementFlow\Models\PurchaseOrderItem::create([
-                                'purchase_order_id' => $po->id,
-                                'material_id' => null,
-                                'description' => $desc,
-                                'unit_purchase' => 'shipping',
-                                'qty_ordered' => 1,
-                                'price_unit' => $fee,
-                                'tax_rate' => $shippingTaxRate,
-                                'line_total' => $fee,
-                                'desired_date' => null,
-                                'expected_date' => null,
-                                'shipping_for_item_id' => (int) $createdItem->getKey(),
-                            ]);
-                            $subtotal += $fee;
-                            $tax += ($fee * $shippingTaxRate);
-                        }
-                    }
-                }
-
-                // まとめての送料生成はB案では不要（各行の直後で生成済み）
-
-                $po->update([
-                    'subtotal' => $subtotal,
-                    'tax' => $tax,
-                    'total' => $subtotal + $tax,
-                ]);
-
-                return $po;
-            });
-
-            // Register approval task per PO
-            try {
-                $poModel = $po->fresh();
-                $authorId = (int) (auth()->id() ?? $poModel->created_by ?? 0);
-                $link = null;
-                if (\Illuminate\Support\Facades\Route::has('procurement.purchase-orders.show')) {
-                    $link = route('procurement.purchase-orders.show', ['po' => $poModel->id]);
-                } elseif (\Illuminate\Support\Facades\Route::has('purchase-orders.show')) {
-                    $link = route('purchase-orders.show', ['purchase_order' => $poModel->id]);
-                }
-                $flowId = (int) ((\Lastdino\ProcurementFlow\Models\AppSetting::get('approval_flow.purchase_order_flow_id')) ?? 0);
-                if ($authorId > 0 && $flowId > 0) {
-                    $poModel->registerApprovalFlowTask($flowId, $authorId, null, null, $link);
-                }
-            } catch (\Throwable $e) {
-                \Log::warning('Failed to register approval flow for PO: '.$e->getMessage(), ['po_id' => $po->id]);
+            $compiledLines = [];
+            foreach ($lines as $entry) {
+                $idx = (int) $entry['idx'];
+                $line = $entry['line'];
+                $compiledLines[] = [
+                    'material_id' => $line['material_id'] ?? null,
+                    'description' => $line['description'] ?? null,
+                    'unit_purchase' => (string) $line['unit_purchase'],
+                    'qty_ordered' => (float) $line['qty_ordered'],
+                    'price_unit' => (float) $line['price_unit'],
+                    'tax_rate' => $line['tax_rate'] ?? null,
+                    'desired_date' => $line['desired_date'] ?? null,
+                    'expected_date' => $line['expected_date'] ?? null,
+                    'note' => $line['note'] ?? null,
+                    'options' => $optionService->normalizeAndValidate((array) ($this->poForm['items'][$idx]['options'] ?? [])),
+                ];
             }
 
+            $poInput = [
+                'supplier_id' => (int) $sid,
+                'expected_date' => $validated['expected_date'] ?? null,
+                'delivery_location' => (string) ($validated['delivery_location'] ?? ''),
+                'items' => $compiledLines,
+            ];
+
+            /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrder $po */
+            $po = $factory->create($poInput, true);
+            $approval->registerForPo($po);
             $created[] = $po->id;
         }
 
@@ -1089,7 +854,7 @@ class Index extends Component
         $count = count($created);
         $this->dispatch('toast', type: 'success', message: $count.'件の発注書を作成しました');
         // Stay on index; optionally we could redirect when only one created.
-    }
+        }
 
     // When supplier changes, prefill auto_send flag from supplier default
     public function updatedPoFormSupplierId($value): void
@@ -1142,15 +907,7 @@ class Index extends Component
     public function saveAdhocPoFromModal(): void
     {
         // 承認フロー事前チェック（validateの前で止める）
-        try {
-            $flowIdStr = \Lastdino\ProcurementFlow\Models\AppSetting::get('approval_flow.purchase_order_flow_id');
-            $flowId = (int) ($flowIdStr ?? 0);
-            if ($flowId <= 0 || ! \Lastdino\ApprovalFlow\Models\ApprovalFlow::query()->whereKey($flowId)->exists()) {
-                $this->addError('approval_flow', '承認フローが未設定のため発注できません。管理者に連絡してください。');
-                return;
-            }
-        } catch (\Throwable $e) {
-            $this->addError('approval_flow', '承認フローが未設定のため発注できません。管理者に連絡してください。');
+        if (! $this->ensureApprovalFlowConfigured()) {
             return;
         }
 
@@ -1175,7 +932,7 @@ class Index extends Component
             ];
         }, array_values($this->adhocForm['items']));
 
-        // Validate with "adhocForm."-prefixed keys so error bag aligns with wire:model / <flux:error name="adhocForm.*"> (if used)
+        // Validate with "adhocForm."-prefixed keys so error bag aligns with wire:model (error bag name should match your Blade bindings)
         $payload = [
             'adhocForm' => [
                 'supplier_id' => $this->adhocForm['supplier_id'],
@@ -1184,9 +941,7 @@ class Index extends Component
                 'items' => $items,
             ],
         ];
-        $prefixedRules = $this->prefixFormRules($rules, 'adhocForm.');
-        $validatedAll = validator($payload, $prefixedRules)->validate();
-        $validated = $validatedAll['adhocForm'];
+        $validated = $this->validatePurchaseOrderPayload('adhocForm', $payload, $rules);
 
         // アドホック発注フローでは supplier_id は必須（FormRequest の withValidator は使っていないため、ここで強制）
         if (empty($validated['supplier_id'])) {
@@ -1194,119 +949,39 @@ class Index extends Component
             return;
         }
 
-        /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrder $po */
-        $po = \Illuminate\Support\Facades\DB::transaction(function () use ($validated) {
-            $po = \Lastdino\ProcurementFlow\Models\PurchaseOrder::create([
-                'supplier_id' => $validated['supplier_id'],
-                'status' => 'draft',
-                'expected_date' => $validated['expected_date'] ?? null,
-                'subtotal' => 0,
-                'tax' => 0,
-                'total' => 0,
-                // 納品先：UI指定があれば使用。空ならPDF設定の既定値を保存
-                'delivery_location' => (string) ($validated['delivery_location'] ?? (Settings::pdf()['delivery_location'] ?? '')),
-                'created_by' => auth()->id() ?: null,
-            ]);
+        // Build lines and create via shared factory/services
+        [$optionService, $factory, $approval] = $this->services();
 
-            $subtotal = 0.0;
-            $tax = 0.0;
-
-            $expectedDate = isset($validated['expected_date']) && $validated['expected_date'] ? \Carbon\Carbon::parse($validated['expected_date']) : null;
-            $taxSet = $this->resolveCurrentItemTaxSet($expectedDate);
-
-            foreach ($validated['items'] as $idx => $line) {
-                $lineTotal = (float) $line['qty_ordered'] * (float) $line['price_unit'];
-                // For ad-hoc items (no material), use default rate when not provided
-                $lineTaxRate = null;
-                if (array_key_exists('tax_rate', $line) && $line['tax_rate'] !== null && $line['tax_rate'] !== '') {
-                    $lineTaxRate = (float) $line['tax_rate'];
-                } else {
-                    $lineTaxRate = (float) ($taxSet['default_rate'] ?? 0.10);
-                }
-                $lineTax = $lineTotal * $lineTaxRate;
-
-                /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrderItem $createdItem */
-                $createdItem = \Lastdino\ProcurementFlow\Models\PurchaseOrderItem::create([
-                    'purchase_order_id' => $po->id,
-                    'material_id' => null, // ad-hoc
-                    'description' => $line['description'] ?? null,
-                    'manufacturer' => $line['manufacturer'] ?? null,
-                    'unit_purchase' => $line['unit_purchase'],
-                    'qty_ordered' => $line['qty_ordered'],
-                    'price_unit' => $line['price_unit'],
-                    'tax_rate' => $lineTaxRate,
-                    'line_total' => $lineTotal,
-                    'desired_date' => $line['desired_date'] ?? null,
-                    'expected_date' => $line['expected_date'] ?? null,
-                    'note' => $line['note'] ?? null,
-                ]);
-
-                // Persist selected options into pivot per active group
-                $selectedOptions = (array) ($this->adhocForm['items'][$idx]['options'] ?? []); // [group_id => option_id]
-                foreach ($selectedOptions as $groupId => $optionId) {
-                    if (empty($optionId)) {
-                        continue;
-                    }
-                    // Validate option belongs to group and is active
-                    $exists = Option::query()
-                        ->active()
-                        ->where('group_id', (int) $groupId)
-                        ->whereKey((int) $optionId)
-                        ->exists();
-                    if (! $exists) {
-                        continue;
-                    }
-
-                    PurchaseOrderItemOptionValue::query()->updateOrCreate(
-                        [
-                            'purchase_order_item_id' => (int) $createdItem->getKey(),
-                            'group_id' => (int) $groupId,
-                        ],
-                        [
-                            'option_id' => (int) $optionId,
-                        ]
-                    );
-                }
-
-                $subtotal += $lineTotal;
-                $tax += $lineTax;
-            }
-
-            $po->update([
-                'subtotal' => $subtotal,
-                'tax' => $tax,
-                'total' => $subtotal + $tax,
-            ]);
-
-            return $po;
-        });
-
-        // 承認フロー登録（設定されたFlow IDで登録）
-        try {
-            /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrder $poModel */
-            $poModel = $po->fresh();
-            $authorId = (int) (auth()->id() ?? $poModel->created_by ?? 0);
-            $link = null;
-            if (\Illuminate\Support\Facades\Route::has('procurement.purchase-orders.show')) {
-                $link = route('procurement.purchase-orders.show', ['po' => $poModel->id]);
-            } elseif (\Illuminate\Support\Facades\Route::has('purchase-orders.show')) {
-                $link = route('purchase-orders.show', ['purchase_order' => $poModel->id]);
-            }
-            $flowId = (int) ((\Lastdino\ProcurementFlow\Models\AppSetting::get('approval_flow.purchase_order_flow_id')) ?? 0);
-            \Log::debug('Registering approval flow for Adhoc PO ID: '.$poModel->id.' with author ID: '.$authorId.' and flow ID: '.$flowId);
-            if ($authorId > 0 && $flowId > 0) {
-                $poModel->registerApprovalFlowTask($flowId, $authorId, null, null, $link);
-            }
-        } catch (\Throwable $e) {
-            \Log::warning('Failed to register approval flow for Adhoc PO: '.$e->getMessage(), ['po_id' => $po->id]);
+        $lines = [];
+        foreach ($validated['items'] as $idx => $line) {
+            $lines[] = [
+                'material_id' => null,
+                'description' => $line['description'] ?? null,
+                'manufacturer' => $line['manufacturer'] ?? null,
+                'unit_purchase' => (string) $line['unit_purchase'],
+                'qty_ordered' => (float) $line['qty_ordered'],
+                'price_unit' => (float) $line['price_unit'],
+                'tax_rate' => $line['tax_rate'] ?? null, // 指定があれば優先、なければ Factory が既定税率を解決
+                'desired_date' => $line['desired_date'] ?? null,
+                'expected_date' => $line['expected_date'] ?? null,
+                'note' => $line['note'] ?? null,
+                'options' => $optionService->normalizeAndValidate((array) ($this->adhocForm['items'][$idx]['options'] ?? [])),
+            ];
         }
+
+        $poInput = [
+            'supplier_id' => (int) $validated['supplier_id'],
+            'expected_date' => $validated['expected_date'] ?? null,
+            'delivery_location' => (string) ($validated['delivery_location'] ?? ''),
+            'items' => $lines,
+        ];
+
+        /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrder $po */
+        $po = $factory->create($poInput, true);
+        $approval->registerForPo($po);
 
         $this->showAdhocPoModal = false;
-        if (\Illuminate\Support\Facades\Route::has('procurement.purchase-orders.show')) {
-            $this->redirectRoute('procurement.purchase-orders.show', ['po' => $po->id]);
-        } elseif (\Illuminate\Support\Facades\Route::has('purchase-orders.show')) {
-            $this->redirectRoute('purchase-orders.show', ['purchase_order' => $po->id]);
-        }
+        $this->redirectToPoShow($po);
     }
 
     /**
@@ -1431,163 +1106,6 @@ class Index extends Component
         }
     }
 
-    // Detail modal helpers removed — detail is handled on the Show page
-
-    /**
-     * Cancel a draft Purchase Order. Only allowed when current status is Draft.
-     */
-    public function cancelPo(int $id): void
-    {
-        /** @var \Lastdino\ProcurementFlow\Models\PurchaseOrder|null $po */
-        $po = PurchaseOrder::query()->find($id);
-        if (! $po) {
-            $this->dispatch('toast', type: 'error', message: 'Purchase order not found');
-            return;
-        }
-
-        // Normalize status value
-        $statusValue = is_string($po->status) ? $po->status : ($po->status->value ?? '');
-        if ($statusValue !== PurchaseOrderStatus::Draft->value) {
-            $this->dispatch('toast', type: 'error', message: __('procflow::po.detail.cancel_not_allowed'));
-            return;
-        }
-
-        $po->status = PurchaseOrderStatus::Canceled;
-        $po->save();
-
-        // Detail modal removed; no in-place refresh needed
-
-        // Refresh the list by resetting the page to trigger re-query
-        $this->resetPage();
-
-        $this->dispatch('toast', type: 'success', message: __('procflow::po.detail.canceled_toast'));
-    }
-
-    /**
-     * Cancel a single Purchase Order Item (entire remaining quantity).
-     * Rules:
-     * - Allowed only when PO status is Issued or Receiving.
-     * - Shipping lines cannot be canceled by this action (kept as-is).
-     * - If partially received, cancel the unreceived remainder only.
-     */
-    public function cancelItem(int $itemId, ?string $reason = null): void
-    {
-        /** @var PurchaseOrderItem|null $item */
-        $item = PurchaseOrderItem::query()->with(['purchaseOrder', 'material'])->find($itemId);
-        if (! $item) {
-            $this->dispatch('toast', type: 'error', message: __('procflow::po.detail.item_not_found'));
-            return;
-        }
-
-        $po = $item->purchaseOrder;
-        if (! in_array($po->status, [PurchaseOrderStatus::Issued, PurchaseOrderStatus::Receiving], true)) {
-            $this->dispatch('toast', type: 'error', message: __('procflow::po.detail.item_cancel_not_allowed'));
-            return;
-        }
-
-        // Do not cancel shipping lines via this action
-        if ($item->unit_purchase === 'shipping') {
-            $this->dispatch('toast', type: 'error', message: __('procflow::po.detail.item_cancel_shipping_not_allowed'));
-            return;
-        }
-
-        // Already fully canceled?
-        $ordered = (float) ($item->qty_ordered ?? 0);
-        $canceled = (float) ($item->qty_canceled ?? 0);
-        if ($canceled >= $ordered - 1e-9) {
-            $this->dispatch('toast', type: 'info', message: __('procflow::po.detail.item_already_canceled'));
-            return;
-        }
-
-        // Compute received quantity in purchase unit
-        $material = $item->material; // may be null for ad-hoc
-        $receivedBase = (float) $item->receivingItems()->sum('qty_base');
-        if ($material) {
-            /** @var UnitConversionService $conv */
-            $conv = app(UnitConversionService::class);
-            $factor = (float) $conv->factor($material, $item->unit_purchase, $material->unit_stock);
-            $receivedPurchase = $factor > 0 ? ($receivedBase / $factor) : 0.0;
-        } else {
-            // ad-hoc: base == purchase
-            $receivedPurchase = $receivedBase;
-        }
-
-        $alreadyCanceled = $canceled;
-        $remaining = max($ordered - $receivedPurchase - $alreadyCanceled, 0.0);
-        if ($remaining <= 1e-9) {
-            $this->dispatch('toast', type: 'info', message: __('procflow::po.detail.item_no_remaining_to_cancel'));
-            return;
-        }
-
-        // Apply cancel of the remaining qty
-        $item->qty_canceled = $alreadyCanceled + $remaining;
-        $item->canceled_at = now();
-        if ($reason) {
-            $item->canceled_reason = $reason;
-        }
-
-        // Update effective line_total for non-shipping lines
-        $effectiveQty = max($ordered - (float) $item->qty_canceled, 0.0);
-        $item->line_total = $effectiveQty * (float) ($item->price_unit ?? 0);
-        $item->save();
-
-        // Recompute PO totals
-        $po = $po->refresh()->loadMissing(['items.receivingItems']);
-        $this->recomputeTotals($po);
-
-        // If no remaining effective quantity across all non-shipping items, update PO status as requested:
-        // - If there is at least some received quantity on any item, mark as Closed
-        // - Otherwise (no receipts at all), mark as Canceled
-        $effectiveRemaining = 0.0;
-        $hasAnyReceipt = false;
-        foreach ($po->items as $lit) {
-            /** @var PurchaseOrderItem $lit */
-            if (($lit->unit_purchase ?? '') === 'shipping') {
-                continue;
-            }
-            $ordered = (float) ($lit->qty_ordered ?? 0);
-            $canceledQty = (float) ($lit->qty_canceled ?? 0);
-            $effectiveRemaining += max($ordered - $canceledQty, 0.0);
-            if (! $hasAnyReceipt && $lit->receivingItems()->exists()) {
-                $hasAnyReceipt = true;
-            }
-        }
-
-        if ($effectiveRemaining <= 1e-9) {
-            $po->status = $hasAnyReceipt ? PurchaseOrderStatus::Closed : PurchaseOrderStatus::Canceled;
-            $po->save();
-        }
-
-        // Detail modal removed; no in-place refresh needed
-
-        $this->dispatch('toast', type: 'success', message: __('procflow::po.detail.item_canceled_toast'));
-    }
-
-    protected function recomputeTotals(PurchaseOrder $po): void
-    {
-        $po->loadMissing('items');
-        $subtotal = 0.0; $tax = 0.0;
-        foreach ($po->items as $it) {
-            /** @var PurchaseOrderItem $it */
-            // Shipping: keep as-is
-            if ($it->unit_purchase === 'shipping') {
-                $lt = (float) ($it->line_total ?? 0);
-                $subtotal += $lt;
-                $tax += $lt * (float) ($it->tax_rate ?? 0);
-                continue;
-            }
-            $qty = max(((float) ($it->qty_ordered ?? 0)) - ((float) ($it->qty_canceled ?? 0)), 0.0);
-            $line = $qty * (float) ($it->price_unit ?? 0);
-            $subtotal += $line;
-            $tax += $line * (float) ($it->tax_rate ?? 0);
-        }
-        $po->subtotal = $subtotal;
-        $po->tax = $tax;
-        $po->total = $subtotal + $tax;
-        $po->save();
-    }
-
-    // Item expected date editing moved to Show component
 
     protected function resetPoForm(): void
     {
@@ -1680,5 +1198,63 @@ class Index extends Component
         }
 
         return $prefixed;
+    }
+
+    /**
+     * 共通: 承認フローの事前チェック。未設定ならエラーを積んで false を返す。
+     */
+    protected function ensureApprovalFlowConfigured(): bool
+    {
+        try {
+            $flowIdStr = \Lastdino\ProcurementFlow\Models\AppSetting::get('approval_flow.purchase_order_flow_id');
+            $flowId = (int) ($flowIdStr ?? 0);
+            if ($flowId <= 0 || ! \Lastdino\ApprovalFlow\Models\ApprovalFlow::query()->whereKey($flowId)->exists()) {
+                $this->addError('approval_flow', '承認フローが未設定のため発注できません。管理者に連絡してください。');
+                return false;
+            }
+            return true;
+        } catch (\Throwable $e) {
+            $this->addError('approval_flow', '承認フローが未設定のため発注できません。管理者に連絡してください。');
+            return false;
+        }
+    }
+
+    /**
+     * 共通: フォームごとのプレフィックスでバリデーションを実行して該当フォーム配下の配列を返す。
+     * @param  array<string,mixed>  $payload
+     * @param  array<string,mixed>  $rules
+     * @return array<string,mixed>
+     */
+    protected function validatePurchaseOrderPayload(string $formKey, array $payload, array $rules): array
+    {
+        $prefixedRules = $this->prefixFormRules($rules, $formKey . '.');
+        $validatedAll = validator($payload, $prefixedRules)->validate();
+        return $validatedAll[$formKey] ?? [];
+    }
+
+    /**
+     * 共通: よく使うサービスの取得。
+     * @return array{0:\Lastdino\ProcurementFlow\Services\OptionSelectionService,1:\Lastdino\ProcurementFlow\Services\PurchaseOrderFactory,2:\Lastdino\ProcurementFlow\Services\ApprovalFlowRegistrar}
+     */
+    protected function services(): array
+    {
+        $optionService = app(\Lastdino\ProcurementFlow\Services\OptionSelectionService::class);
+        $factory = app(\Lastdino\ProcurementFlow\Services\PurchaseOrderFactory::class);
+        $approval = app(\Lastdino\ProcurementFlow\Services\ApprovalFlowRegistrar::class);
+        return [$optionService, $factory, $approval];
+    }
+
+    /**
+     * 共通: 作成した PO の詳細へ遷移（ルートが無い場合は何もしない）
+     */
+    protected function redirectToPoShow(\Lastdino\ProcurementFlow\Models\PurchaseOrder $po): void
+    {
+        if (\Illuminate\Support\Facades\Route::has('procurement.purchase-orders.show')) {
+            $this->redirectRoute('procurement.purchase-orders.show', ['po' => $po->id]);
+            return;
+        }
+        if (\Illuminate\Support\Facades\Route::has('purchase-orders.show')) {
+            $this->redirectRoute('purchase-orders.show', ['purchase_order' => $po->id]);
+        }
     }
 }

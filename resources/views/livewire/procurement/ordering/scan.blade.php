@@ -52,20 +52,21 @@
                 @if (!empty($optionGroups))
                     <div class="mt-4 space-y-3">
                         <flux:heading size="xs">{{ __('procflow::ordering.options.title') }}</flux:heading>
-                        @foreach($optionGroups as $g)
-                            @php $gid = $g['id']; $opts = $optionsByGroup[$gid] ?? []; @endphp
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
-                                <div class="text-sm text-gray-700">{{ $g['name'] }}</div>
-                                <div class="md:col-span-2">
+                        <div class="grid grid-cols-2 gap-4">
+                            @foreach($optionGroups as $g)
+                                @php $gid = $g['id']; $opts = $optionsByGroup[$gid] ?? []; @endphp
+                                <flux:field>
+                                    <flux:label>{{ $g['name'] }}</flux:label>
                                     <select class="w-full border rounded p-2 bg-white dark:bg-neutral-900" wire:model.defer="form.options.{{ $gid }}">
                                         <option value="">-</option>
                                         @foreach($opts as $o)
                                             <option value="{{ $o['id'] }}">{{ $o['name'] }}</option>
                                         @endforeach
                                     </select>
-                                </div>
-                            </div>
-                        @endforeach
+                                    <flux:error name="form.options.{{ $gid }}" />
+                                </flux:field>
+                            @endforeach
+                        </div>
                     </div>
                 @endif
             @endif

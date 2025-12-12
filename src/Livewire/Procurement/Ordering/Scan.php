@@ -10,6 +10,7 @@ use Lastdino\ProcurementFlow\Actions\Ordering\CreateDraftPurchaseOrderFromScanAc
 use Lastdino\ProcurementFlow\Models\OrderingToken;
 use Illuminate\Http\Request;
 use Lastdino\ProcurementFlow\Models\{OptionGroup, Option};
+use Lastdino\ProcurementFlow\Services\{OptionCatalogService, OptionSelectionRuleBuilder};
 
 class Scan extends Component
 {
@@ -161,22 +162,11 @@ class Scan extends Component
         $rules = [
             'form.token' => ['required', 'string'],
             'form.qty' => ['required', 'numeric', 'gt:0'],
-            'form.options' => ['array'],
         ];
 
-        $activeGroups = OptionGroup::query()->active()->ordered()->get(['id','name']);
-        if ($activeGroups->isNotEmpty()) {
-            $groupIds = $activeGroups->pluck('id')->map(fn ($v) => (int) $v)->all();
-            $rules['form.options'][] = 'required_array_keys:'.implode(',', $groupIds);
-            foreach ($activeGroups as $group) {
-                $gid = (int) $group->getKey();
-                $rules["form.options.$gid"] = [
-                    'required',
-                    \Illuminate\Validation\Rule::exists((new Option())->getTable(), 'id')
-                        ->where(fn ($q) => $q->where('group_id', $gid)->where('is_active', true)->whereNull('deleted_at')),
-                ];
-            }
-        }
+        $activeGroups = app(OptionCatalogService::class)->getActiveGroups();
+        $optionRules = app(OptionSelectionRuleBuilder::class)->build('form.options', $activeGroups);
+        $rules = $rules + $optionRules;
 
         $this->validate($rules);
 
@@ -226,11 +216,8 @@ class Scan extends Component
 
     protected function loadActiveOptions(): void
     {
-        // Active groups
-        $groups = \Lastdino\ProcurementFlow\Models\OptionGroup::query()
-            ->active()
-            ->ordered()
-            ->get(['id','name']);
+        $catalog = app(OptionCatalogService::class);
+        $groups = $catalog->getActiveGroups();
         $this->optionGroups = [];
         foreach ($groups as $g) {
             $this->optionGroups[] = [
@@ -239,19 +226,6 @@ class Scan extends Component
             ];
         }
 
-        // Active options by group
-        $opts = \Lastdino\ProcurementFlow\Models\Option::query()
-            ->active()
-            ->ordered()
-            ->get(['id','name','group_id']);
-        $by = [];
-        foreach ($opts as $o) {
-            $gid = (int) $o->getAttribute('group_id');
-            $by[$gid][] = [
-                'id' => (int) $o->getKey(),
-                'name' => (string) $o->getAttribute('name'),
-            ];
-        }
-        $this->optionsByGroup = $by;
+        $this->optionsByGroup = $catalog->getActiveOptionsByGroup();
     }
 }

@@ -12,6 +12,7 @@ use Lastdino\ProcurementFlow\Models\AppSetting;
 use Lastdino\ApprovalFlow\Models\ApprovalFlow;
 use Illuminate\Validation\Rule;
 use Lastdino\ProcurementFlow\Models\{OptionGroup, Option};
+use Lastdino\ProcurementFlow\Services\OptionSelectionRuleBuilder;
 
 class StorePurchaseOrderRequest extends FormRequest
 {
@@ -50,25 +51,12 @@ class StorePurchaseOrderRequest extends FormRequest
             'items.*.note' => ['nullable','string','max:1000'],
         ];
 
-        // オプショングループ: 有効なグループごとに必須にする
+        // オプショングループ: 有効なグループごとに必須にする（共通ビルダーを利用）
         $activeGroups = OptionGroup::query()->active()->ordered()->get(['id','name']);
         if ($activeGroups->isNotEmpty()) {
-            // Ensure the options container itself is an array and has required keys for each active group
-            $groupIds = $activeGroups->pluck('id')->map(fn ($v) => (int) $v)->all();
-            $rules['items.*.options'] = ['required','array', 'required_array_keys:'.implode(',', $groupIds)];
-
-            foreach ($activeGroups as $group) {
-                $gid = (int) $group->getKey();
-                // Require an active option that belongs to this group (and not soft-deleted)
-                $rules["items.*.options.$gid"] = [
-                    'required',
-                    Rule::exists((new Option())->getTable(), 'id')
-                        ->where(fn ($q) => $q->where('group_id', $gid)
-                            ->where('is_active', true)
-                            ->whereNull('deleted_at')
-                        ),
-                ];
-            }
+            /** @var OptionSelectionRuleBuilder $builder */
+            $builder = app(OptionSelectionRuleBuilder::class);
+            $rules = $rules + $builder->build('items.*.options', $activeGroups);
         }
 
         return $rules;
