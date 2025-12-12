@@ -31,6 +31,16 @@
                         <td class="py-2 px-3">{{ $po->requester->name ?? '-' }}</td>
                         <td class="py-2 px-3">
                             @php $status = is_string($po->status) ? $po->status : ($po->status->value ?? 'draft'); @endphp
+                            @php
+                                $color = match ($status) {
+                                    'closed' => 'green',
+                                    'issued' => 'yellow',
+                                    'receiving' => 'cyan',
+                                    'canceled' => 'red',
+                                    default  => 'zinc',
+                                };
+                            @endphp
+                            <flux:badge color="{{ $color }}" size="sm">{{ __('procflow::po.status.' . $status) }}</flux:badge>
                             {{ __('procflow::po.status.' . $status) }}
                         </td>
                         <td class="py-2 px-3">{{ $po->items->count() }}</td>
