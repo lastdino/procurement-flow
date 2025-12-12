@@ -30,6 +30,7 @@ class CreateDraftPurchaseOrderFromScanAction
 
         /** @var Material $material */
         $material = $token->material()->firstOrFail();
+        abort_if(! (bool) ($material->is_active ?? true), 422, 'Material is inactive.');
         $supplierId = (int) ($material->preferred_supplier_id ?? 0);
         abort_if($supplierId <= 0, 422, 'Preferred supplier is not set for this material.');
 

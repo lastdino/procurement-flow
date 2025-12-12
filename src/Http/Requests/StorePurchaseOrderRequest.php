@@ -32,7 +32,13 @@ class StorePurchaseOrderRequest extends FormRequest
             'items' => ['required','array','min:1'],
             // Allow ordering without registering material
             // Require either material_id or description
-            'items.*.material_id' => ['nullable','exists:' . Tables::name('materials') . ',id','required_without:items.*.description'],
+            // 資材は「有効（is_active = true）」なものに限定する
+            'items.*.material_id' => [
+                'nullable',
+                Rule::exists(Tables::name('materials'), 'id')
+                    ->where(fn ($q) => $q->where('is_active', true)),
+                'required_without:items.*.description',
+            ],
             'items.*.unit_purchase' => ['required','string','max:32'],
             'items.*.qty_ordered' => ['required','numeric','gt:0'],
             'items.*.price_unit' => ['required','numeric','gte:0'],

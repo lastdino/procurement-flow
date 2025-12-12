@@ -113,6 +113,12 @@ class Scan extends Component
             return;
         }
 
+        if (! (bool) ($mat->is_active ?? true)) {
+            $this->resetInfo();
+            $this->setMessage(__('procflow::ordering.messages.material_not_found'), false);
+            return;
+        }
+
         $this->info = [
             'material_name' => (string) ($mat->name ?? ''),
             'material_sku' => (string) ($mat->sku ?? ''),

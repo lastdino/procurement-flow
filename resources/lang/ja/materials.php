@@ -6,6 +6,7 @@ return [
     'title' => '資材一覧',
     'badges' => [
         'lot' => 'ロット',
+        'inactive' => '無効',
     ],
     'sections' => [
         'basic' => '基本情報',
@@ -34,6 +35,8 @@ return [
         'cancel' => 'キャンセル',
         'saving' => '保存中...',
         'processing' => '処理中...',
+        'enable' => '有効化',
+        'disable' => '無効化',
     ],
     'table' => [
         'ghs' => 'GHS',
@@ -151,5 +154,9 @@ return [
         'delete' => '削除',
         'badge_has' => 'SDSあり',
         'badge_none' => 'SDSなし',
+    ],
+    'flash' => [
+        'material_enabled' => '資材を有効化しました。',
+        'material_disabled' => '資材を無効化しました。',
     ],
 ];

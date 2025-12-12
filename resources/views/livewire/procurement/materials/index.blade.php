@@ -59,8 +59,12 @@
                         </td>
                         <td class="py-2 px-3">{{ $m->sku }}</td>
                         <td class="py-2 px-3">
-                            {{ $m->name }}
-
+                            <div class="flex items-center gap-2">
+                                <span>{{ $m->name }}</span>
+                                @if(!($m->is_active ?? true))
+                                    <flux:badge size="sm" color="zinc">{{ __('procflow::materials.badges.inactive') }}</flux:badge>
+                                @endif
+                            </div>
                         </td>
                         <td class="py-2 px-3">
                             <div>
@@ -103,6 +107,11 @@
                                     @endif
                                     <flux:menu.item icon="arrow-up-tray" wire:click="openSdsModal({{ $m->id }})">{{ __('procflow::materials.sds.open_modal') }}</flux:menu.item>
                                     <flux:menu.item icon="pencil-square" variant="danger" wire:click="openEditMaterial({{ $m->id }})">{{ __('procflow::materials.buttons.edit') }}</flux:menu.item>
+                                    @if($m->is_active)
+                                        <flux:menu.item icon="no-symbol" wire:click="toggleActive({{ $m->id }})">{{ __('procflow::materials.buttons.disable') }}</flux:menu.item>
+                                    @else
+                                        <flux:menu.item icon="power" wire:click="toggleActive({{ $m->id }})">{{ __('procflow::materials.buttons.enable') }}</flux:menu.item>
+                                    @endif
                                 </flux:menu>
                             </flux:dropdown>
                         </td>
@@ -124,7 +133,7 @@
                     <flux:heading size="sm">{{ __('procflow::materials.sections.basic') }}</flux:heading>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <flux:input wire:model="materialForm.sku" label="{{ __('procflow::materials.form.sku') }}"/>
-                        <flux:input wire:model="materialForm.name" label="{{ __('procflow::materials.form.name') }}"/>
+                        <flux:textarea rows="2" wire:model="materialForm.name" label="{{ __('procflow::materials.form.name') }}" />
                         <flux:input wire:model="materialForm.manufacturer_name" label="{{ __('procflow::materials.form.manufacturer_name') }}"/>
                         <flux:input wire:model="materialForm.storage_location" label="{{ __('procflow::materials.form.storage_location') }}"/>
                         <flux:field>

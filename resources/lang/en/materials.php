@@ -6,6 +6,7 @@ return [
     'title' => 'Materials',
     'badges' => [
         'lot' => 'Lot',
+        'inactive' => 'Inactive',
     ],
     'sections' => [
         'basic' => 'Basic Information',
@@ -34,6 +35,8 @@ return [
         'cancel' => 'Cancel',
         'saving' => 'Saving...',
         'processing' => 'Processing...',
+        'enable' => 'Enable',
+        'disable' => 'Disable',
     ],
     'table' => [
         'ghs' => 'GHS',
@@ -151,5 +154,9 @@ return [
         'delete' => 'Delete',
         'badge_has' => 'SDS Available',
         'badge_none' => 'No SDS',
+    ],
+    'flash' => [
+        'material_enabled' => 'Material has been enabled.',
+        'material_disabled' => 'Material has been disabled.',
     ],
 ];

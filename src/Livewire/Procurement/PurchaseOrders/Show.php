@@ -9,6 +9,7 @@ use Lastdino\ProcurementFlow\Models\PurchaseOrder;
 use Lastdino\ProcurementFlow\Models\PurchaseOrderItem;
 use Lastdino\ProcurementFlow\Enums\PurchaseOrderStatus;
 use Lastdino\ProcurementFlow\Services\UnitConversionService;
+use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 
 class Show extends Component
@@ -70,6 +71,11 @@ class Show extends Component
             'receivings.items.material',
             'receivings.items.purchaseOrderItem',
         ]);
+
+        $po->cancelApprovalFlowTask(
+            userId: Auth::id(),      // キャンセルを実行するユーザーのID（通常は申請者自身）
+            comment: '' // キャンセル理由（オプション）
+        );
 
         $this->dispatch('toast', type: 'success', message: __('procflow::po.detail.canceled_toast'));
     }

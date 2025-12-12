@@ -635,13 +635,15 @@ class Index extends Component
     {
         return \Lastdino\ProcurementFlow\Models\Supplier::query()
             ->orderBy('name')
-            ->limit(100)
             ->get(['id','name','auto_send_po']);
     }
 
     public function getMaterialsProperty()
     {
-        return \Lastdino\ProcurementFlow\Models\Material::query()->orderBy('sku')->limit(100)->get();
+        return \Lastdino\ProcurementFlow\Models\Material::query()
+            ->active()
+            ->orderBy('sku')
+            ->get();
     }
 
     public function getUsersProperty()

@@ -25,6 +25,8 @@ class Material extends Model implements HasMedia
         'separate_shipping', 'shipping_fee_per_order',
         // lot management
         'manage_by_lot',
+        // activation
+        'is_active',
     ];
 
     public function getTable()
@@ -43,7 +45,16 @@ class Material extends Model implements HasMedia
             'separate_shipping' => 'boolean',
             'shipping_fee_per_order' => 'decimal:2',
             'manage_by_lot' => 'boolean',
+            'is_active' => 'boolean',
         ];
+    }
+
+    /**
+     * Scope: only active materials.
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
     }
 
     public function category(): BelongsTo

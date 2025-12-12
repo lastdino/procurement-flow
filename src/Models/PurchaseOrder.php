@@ -7,6 +7,7 @@ namespace Lastdino\ProcurementFlow\Models;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Lastdino\ProcurementFlow\Enums\PurchaseOrderStatus;
+use Lastdino\ProcurementFlow\Casts\PurchaseOrderStatusCast;
 use Lastdino\ProcurementFlow\Support\Tables;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\User;
@@ -38,7 +39,7 @@ class PurchaseOrder extends Model
     protected function casts(): array
     {
         return [
-            'status' => PurchaseOrderStatus::class,
+            'status' => PurchaseOrderStatusCast::class,
             'issue_date' => 'datetime',
             'expected_date' => 'datetime',
             'subtotal' => 'decimal:2',

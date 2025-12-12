@@ -193,6 +193,18 @@ class Index extends Component
         $this->showTokenModal = true;
     }
 
+    public function toggleActive(int $materialId): void
+    {
+        /** @var Material $m */
+        $m = Material::query()->findOrFail($materialId);
+        $m->is_active = ! (bool) ($m->is_active ?? true);
+        $m->save();
+
+        $this->dispatch('notify', text: $m->is_active
+            ? __('procflow::materials.flash.material_enabled')
+            : __('procflow::materials.flash.material_disabled'));
+    }
+
     protected function tokenRules(): array
     {
         return [
